@@ -1,0 +1,48 @@
+/****************************************************************************************************************************************
+*This program was created in Bricx Command Centre Version 3.3 (Build 3.3.8.10)
+*http://bricxcc.sourceforge.net/
+*The 'Enhanced firmware' box should be ticked in Edit>Preferences>Compiler>NBC/NXC
+****************************************************************************************************************************************/
+
+#define BT_CONN 0
+
+task main()
+{
+ int xR = 150;     // upper x limit above which the robot should turn right to face the object
+ int xL = 100;     // lower x limit below which the robot should turn left to face the object
+ bool xobj = 0;    // to store location of object sent from NXTcam
+ char rtn;         // message receive return value; 0 = no error (NO_ERR), 64 = no new
+                   // message(STAT_MSG_EMPTY_MAILBOX), 4 = signed variable
+                   // (VT_SWORD)
+ 
+ int powerA=35, powera=20, powerC=35, powerc=20;    // A & C motor power
+
+ while(true)
+ {
+  ClearScreen();
+
+  rtn = ReceiveRemoteBool(MAILBOX1, true, xobj);
+  TextOut(0, LCD_LINE1, "X=");
+  NumOut(10, LCD_LINE2, xobj);
+  TextOut(0, LCD_LINE5, "RTN_bool=");
+  NumOut(10, LCD_LINE6, rtn);
+
+  if(rtn == 64)               // stop if there is no message in mailbox
+  { rtn = 0; Off(OUT_AC); TextOut(0, LCD_LINE8, "stopA"); Wait(500); }
+
+  else if(xL < xobj && xobj < xR) // move forward if object is in front of cam view
+  { OnFwd(OUT_AC, powerC); TextOut(0, LCD_LINE8, "forward"); Wait(500); }
+
+  else if(xobj >= xR) // move forward & turn right if object is to the right of cam view
+  { OnFwd(OUT_A, powera); OnFwd(OUT_C, powerC); TextOut(0, LCD_LINE8, "right"); Wait(500); }
+
+  else if(xobj <= xL) // move forward & turn left if object is to the left of cam view
+  { OnFwd(OUT_C, powerc); OnFwd(OUT_A, powerA); TextOut(0, LCD_LINE8, "left"); Wait(500); }
+
+  else                // stop in the case of some other unexpected result
+  { Off(OUT_AC); TextOut(0, LCD_LINE8, "stopB"); Wait(500); }
+
+  until(BluetoothStatus(BT_CONN) == NO_ERR);
+ }
+
+}

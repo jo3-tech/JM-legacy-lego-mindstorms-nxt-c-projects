@@ -1,0 +1,251 @@
+//==MACROS===============================================================================================================================
+//------------------------------------------------------------------------------------------------------------------------------GENERAL--
+#define DISTANCE SensorUS(S4)                  // distance from the ultrasonic to the object being mapped (cm)
+#define LIGHT Sensor(S3)                       // value read in by the light sensor
+#define NEAR 25                                // minimum object distance from robot (cm)
+#define THRESHOLD 40                           // maximum light sensor value for detecting a black line
+#define lrotate90 RotateMotor(OUT_B,30,90)     // rotate ultrasonic left by 90 degrees
+#define rrotate90 RotateMotor(OUT_B,30,-90)    // rotate U.S right by 90 degrees
+//-----------------------------------------------------------------------------------------------------------------------------LOCALISE--
+#define pi 3.14                                // pi =3.14
+#define dB 16.5                                // distance btw left & right wheels (between where they touch the ground) (cm)
+#define tyrecirc 16.96                         // tyre radius = 2.7cm, circumference = 2.pi.r=16.96 cm
+#define scale 0.5                              // scale factor depending on the size of the room
+#define xhome=52                               // the preferred home location of the robot (centre of nxt screen)
+#define yhome=32
+//-----------------------------------------------------------------------------------------------------------------------------MOTION----
+#define rturn OnFwd(OUT_C,40)                  // turn right (using one wheel)
+#define lturn OnFwd(OUT_A,40)                  // turn left (using one wheel)
+#define ralign RotateMotor(OUT_C,50,550)       // align robot towards the right by 90 deg (using one wheel); thetaW=(thetaR*dB)/(rW)
+#define ralignb RotateMotor(OUT_C,50,445)      // align robot towards the right a bit less than 90
+#define lalign RotateMotor(OUT_A,50,550)       // align robot towards the left by 90 deg
+#define lalignb RotateMotor(OUT_A,50,445)      // align robot towards the left a bit less than 90
+#define curve_left OnFwd(OUT_C,40); OnFwd(OUT_A,60);// move the robot forward but curve left at the same time
+#define curve_right OnFwd(OUT_A,35); OnFwd(OUT_C,40);// move the robot forward but curve right at the same time
+#define fmove OnFwdReg(OUT_AC,50,OUT_REGMODE_SYNC);
+//#define fmove OnFwd(OUT_AC,50)               // move forward
+#define stopmove Off(OUT_AC)                   // stop moving
+
+//==GLOBAL VARIABLES=====================================================================================================================
+//------------------------------------------------------------------------------------------------------------------------------GENERAL--
+byte handle;           // for use with file system
+int file_size;         // for storing the size of the file
+int byte_size;         // for storing the no. of bytes written to a file
+int rtn_code;          // return code for file system operations
+//-----------------------------------------------------------------------------------------------------------------------------LOCALISE--
+float theta=90;        // robot orientation w.r.t origin(deg) (set to 90 deg initially; i.e. pointing in y-direction when 1st put down)
+float x=xhome,y=yhome; // robot x & y coordinates resp. to the home location
+//-----------------------------------------------------------------------------------------------------------------------------MOTION----
+float BLACK, WHITE;
+float offset = 45;                    // (BLACK+WHITE)/2;
+float Kp =1.5, Ki=0, Kd=0;            // tunable parametres
+//Kc=2.5 Pc=.34, dT=0.014
+//for P;   Kp=0.5Kc, Ki=0, Kd=0
+//for PI;  Kp=0.45Kc=1.125, Ki=1.2Kp.dT/Pc=0.0556, Kd=0
+//for PID; Kp=0.6Kc=1.5, Ki=2Kp.dT/Pc=0.124, Kd=Kp.Pc/8dT=4.55
+float Tp = 60;                        // also tunable
+float error, last_error=0, integral=0, derivative=0, turn, powerA, powerC;
+
+//==PROTOTYPES&INLINE FUNCTIONS==========================================================================================================
+//---------------------------------------------------------------------------------------------------------------------------------------
+inline float deg_range(float angle)           // to make sure angles are in range 0->360 deg; use inline since it is used by many tasks
+{
+ //local variables
+ //n/a
+
+ // convert angle to a value btw 0->360 deg
+ if(angle>=(360)){angle=360-angle;}
+ else if(angle<0){angle=360+angle;}
+ return angle;
+}
+//---------------------------------------------------------------------------------------------------------------------------------------
+task localise();                              // to perform odometry
+task on_line();                               // to get onto the line properly
+task follow();                                // to follow the line using pid
+task obstacle();                              // to avoid obstacles on the line
+task clear_object();                          // to clear the obstacle and find its way back onto the line
+
+//==TASKS================================================================================================================================
+//---------------------------------------------------------------------------------------------------------------------------------------
+task main()
+{
+ //local variables
+ float xPREVrd=0, yPREVrd=0;                  // previous x,y location of the robot read from the file
+ string sxPREVrd, syPREVrd;                   // string counterparts of the above
+
+ //schedule tasks
+ Precedes(localise,on_line);
+
+ //initialise sensors
+ SetSensorLight(S3);
+ SetSensorLowspeed(S4);
+ 
+ /* calibrate light sensor
+ TextOut(0,0,"press when white");
+ until(ButtonPressed(BTNCENTER,false)==true)
+ WHITE=LIGHT;
+ Wait(500);
+
+ TextOut(0,0,"press when black");
+ until(ButtonPressed(BTNCENTER,false)==true)
+ BLACK=LIGHT;
+ Wait(500);
+ 
+ //start the tasks
+ TextOut(0,0,"press to begin!!");
+ until(ButtonPressed(BTNCENTER,false)==true)
+ Wait(500);
+ */
+
+ //check current location
+ rtn_code=OpenFileRead("location.txt", file_size, handle);// open file for reading
+ if(rtn_code=NO_ERR)                          // if the file exists, extract the location
+ {
+  rtn_code=ReadLnString(handle,sxPREVrd);
+  if(rtn_code=NO_ERR)
+  {
+   xPREVrd=StrToNum(sxPREVrd);
+   rtn_code=ReadLnString(handle,syPREVrd);
+   if(rtn_code=NO_ERR)
+   {
+    yPREVrd=StrToNum(syPREVrd);
+   }
+   else { x=xhome; y=yhome; }                 // if there are any problems set the current position as home
+  }
+  else { x=xhome; y=yhome; }
+
+  CloseFile(handle);
+ }
+}
+//---------------------------------------------------------------------------------------------------------------------------------------
+task localise()
+{
+ //local variables
+ float thetaLM=0, thetaRM=0;         // amount by which left & right motors rotate resp. (deg bcos of motorrotationcount)
+ float dL=0,dR=0,dC=0;               // distance moved by left wheel, right wheel & robot centre respectively (cm bcos of tyrecirc)
+ float phi=0;                        // inner angle for arcs produced by dL, dR & dC (rad from odometry eqns derivation)
+
+ //odometry; differential drive
+ while(1)
+ {
+  Wait(200);                         // so different tasks are waiting for different periods to add some priority
+  thetaLM=MotorRotationCount(OUT_C);
+  thetaRM=MotorRotationCount(OUT_A);
+  dL=(thetaLM/360)*tyrecirc;         // arc length=(theta[deg]/360)*2.pi.r; distance motor moved in a straight line
+  dR=(thetaRM/360)*tyrecirc;         //     "
+  Yield();                           // so that any other function call to the motors will execute 1st
+  ResetRotationCount(OUT_AC);
+  Yield();
+
+  dC=(dL+dR)/2;
+  phi=(dR-dL)/dB;
+  phi=(phi*180)/pi;                  // convert phi to degrees
+
+  theta=theta+phi;
+  theta=deg_range(theta);            // make sure orientation range is always 0->360 deg
+
+  x=x+dC*cosd(theta);
+  y=y+dC*sind(theta);
+ }
+}
+//---------------------------------------------------------------------------------------------------------------------------------------
+task on_line()
+{
+ repeat(2)
+ {
+  if(LIGHT<=THRESHOLD)                        // if the line is detected, move forward until the line edge is reached
+  {
+   fmove;Wait(100);
+   until((LIGHT>THRESHOLD)||(DISTANCE<=NEAR));
+   stopmove;Wait(300);
+  }
+
+  if(LIGHT>THRESHOLD)                         // if the line edge is reached check for the line on the right and stop if it is found
+  {
+   rturn;Wait(300);
+   if(LIGHT<=THRESHOLD)
+   {stopmove;Wait(300);}
+   else                                       // otherwise turn left until the line is found
+   {stopmove;Wait(300);lturn;
+    until(LIGHT<=THRESHOLD);stopmove;Wait(300);}
+  }
+ }
+ ExitTo(follow);
+}
+//---------------------------------------------------------------------------------------------------------------------------------------
+task follow()
+{
+ //PID control
+
+  while(true)
+ {
+  if(DISTANCE<=NEAR)                          // call task; obstacle if an obstacle is detected
+  {
+   stopmove;Wait(300);
+   ExitTo(obstacle);
+  }
+  
+  error = LIGHT - offset;                     // calculate the error by subtracting the offset from the current light reading
+  integral = integral + error;                // calculate integral
+  derivative = error - last_error;
+  turn = (Kp*error)+(Ki*integral)+(Kd*derivative);      // the "P term", how much we want to change the motors' power
+
+  powerA = Tp + turn;                         // the power level for the A motor
+  if(powerA > 0)                              // positive motor power is no problem
+  {OnFwd(OUT_A,powerA);}
+  else
+  {powerA = powerA*(-1);                      // negative motor power needs to be made into a positive number and the motor direction
+   OnRev(OUT_A,powerA);}                      // needs to be reversed on the control panel
+
+  powerC = Tp - turn;                         // the power level for the C motor
+  if(powerC > 0)                              // positive motor power is no problem
+  {OnFwd(OUT_C,powerC);}
+  else
+  {powerC = powerC*(-1);                      // negative motor power needs to be made into a positive number and the motor direction
+   OnRev(OUT_C,powerC);}                      // needs to be reversed on the control panel
+
+  last_error=error;
+ }
+}
+//---------------------------------------------------------------------------------------------------------------------------------------
+task obstacle()
+{
+ lalign;Wait(500);until(MotorRunState(OUT_A)==0);    // align the robot left; parallel with the obstacle
+ rrotate90;Wait(500);until(MotorRunState(OUT_B)==0); // get the obstacle within view of the ultrasonic sensor
+ fmove;                                              // move until the object is not in the way, then stop and turn to go around it
+ until(DISTANCE>NEAR)
+ Wait(500);
+ stopmove;Wait(300);
+ ralign;Wait(500);until(MotorRunState(OUT_C)==0);
+ fmove;                         // move forward and continuously check if the object is back in view or if the line has been detected
+ while(true)
+ {
+  if(DISTANCE<=NEAR)
+  {stopmove;Wait(300);
+   ExitTo(clear_object);}                            // stop moving and call the task clear_object is the object is in view
+  else if(LIGHT<=THRESHOLD)
+  {stopmove;Wait(300);
+   lrotate90;Wait(500);
+   until(MotorRunState(OUT_B)==0);
+   ExitTo(on_line);}                                 // stop moving and call the task on_line if the line has been detected again
+ }
+}
+//---------------------------------------------------------------------------------------------------------------------------------------
+task clear_object()
+{
+ fmove;                                              // move forward and continuously check if the line has been detected or if the
+ while(true)                                         // object is no more in view
+ {
+  if(DISTANCE>NEAR)
+  {Wait(400);stopmove;Wait(300);
+   ralignb;Wait(500);until(MotorRunState(OUT_C)==0);
+   lrotate90;Wait(500);until(MotorRunState(OUT_B)==0);
+   curve_right;until(LIGHT<=THRESHOLD);ExitTo(on_line);} // if the object is no more in view, turn towards the direction of the line and
+  else if(LIGHT<=THRESHOLD)                              // curve towards it until it has been detected
+  {stopmove;Wait(300);
+   lrotate90;Wait(500);until(MotorRunState(OUT_B)==0);
+   ExitTo(on_line);}                                     // stop moving and call the task on_line if the line has been detected again
+ }
+}
+
+//==END==================================================================================================================================

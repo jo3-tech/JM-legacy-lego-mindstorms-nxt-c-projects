@@ -1,0 +1,268 @@
+//MACROS
+
+//general
+#define DISTANCE SensorUS(IN_4)             // variable for storing the current u.s distance
+#define NEAR 30                              // minimum object distance from robot
+#define scale 0.6                            // scale factor depending on the size of the room
+
+//read data
+#define rrotate3 RotateMotor(OUT_B,30,15)    // rotate u.s right by 15 degrees
+#define rrotate9 RotateMotor(OUT_B,30,90)    // rotate u.s right by 90 degrees
+#define lrotate3 RotateMotor(OUT_B,30,-15)   // rotate u.s left by 15 degrees
+#define lrotate9 RotateMotor(OUT_B,30,-90)   // rotate u.s left by 90 degrees
+
+//navigation
+#define rturn RotateMotor(OUT_C,50,383)      // align robot towards the right by 90 degrees according to my calculations
+#define lturn RotateMotor(OUT_A,50,383)      // align robot towards the left
+#define rturn45 RotateMotor(OUT_C,50,191)    // align robot towards the right by 45 degrees
+#define lturn45 RotateMotor(OUT_A,50,191)    // align robot towards the left by 45 degrees
+#define rturn180 RotateMotor(OUT_C,50,766)   // turn the robot right by 180 degrees
+#define fmove OnFwdReg(OUT_AC,50,OUT_REGMODE_SYNC);
+//#define fmove OnFwd(OUT_AC,50)             // move forward
+#define stopmove Off(OUT_AC)                 // stop moving
+
+//turn odometry, straight odometry
+#define pi 3.14                              // pi =3.14
+#define tyrecirc 16.96                       // tyre radius = 2.7cm, circumference = 2.pi.r=16.96
+#define robotcirc 72.26                      // shaft length between both tyres = 11.5cm, circumference=2.pi.r=72.26
+
+//GLOBAL VARIABLES
+
+//read, process and write data
+int i,j,k;
+int read_angle;               // angle from the vertical axis of the robot at which data is being read
+int data_store;               // to store the distance read by the u.s
+float disp[2];                // set disaplacement of each data point read in by u.s to (0,0).
+float vect_store[2];          // set the coordinate of each data point to be printed to (0,0).
+
+//turn odometry, straight odometry and process data
+float arc_angle=0;            // angle by which a motor was rotated during a turn of the robot
+float arc_length=0;           // for turn odometry; length of arc drawn out by the wheel when turning, keeping one wheel stationary.
+                              // for straight odometry; distance travelled in a straight line.
+float turn_angle=0;           // amount by which robot has just rotated
+float sum_turn_angle=0;       // amount by which robot has rotated so far
+float sum_rdt_angle=0;        // amount by which u.s has rotated taking into account the robots rotations also
+
+float s[2];                   // set disaplacement from last robot location to (0,0).
+float bot_vect[]={50,32};     // set the initial robot loaction to (50,32); the centre of the screen
+float data_vect[2];           // set the location of the data read by the u.s to (0,0)
+
+//navigation flags
+int nav0=0, navr1=0, navr2=0, navl1=0, navl2=0, bounce=0;
+
+//PROTOTYPES
+
+//subroutines
+sub lturn_odometry();
+sub rturn_odometry();
+sub s_odometry();
+sub data();
+
+//tasks
+task navigate();
+task test();
+
+//TASKS
+
+task main()
+{
+ SetSensorLowspeed(IN_4);
+ ResetRotationCount(OUT_AC);
+ StartTask(navigate);
+}
+
+task navigate()
+{
+ while(1)
+ {
+  //read and print data
+  data();
+
+  if((nav0)&&(navr1||navr2)&&(navl1||navl2))   // if robot is in a corner or boxed in; turn around 180 degrees
+  {
+   rturn180;
+   rturn_odometry();
+   bounce++;
+   if (bounce==2)
+   { rturn45; rturn_odometry();}               // if it has gone from corner to corner already, then explore somewhere else
+  }
+  else if((nav0)&&(navr1)&&(navr2))            // if robot is at a right corner; turn left
+  {
+   lturn;
+   lturn_odometry();
+   bounce=0;
+  }
+  else if((nav0)&&(navl1)&&(navl2))            // if robot is at a left corner; turn right
+  {
+   rturn;
+   rturn_odometry();
+   bounce=0;
+  }
+  else if(nav0)
+  { if(Random(3)==1)
+    { rturn;
+      rturn_odometry();
+      bounce=0;
+    }
+    else
+    { lturn;
+      lturn_odometry();
+      bounce=0;
+    }
+  }
+  else
+  {
+   switch (Random(4))
+   {
+     case 1:
+          rturn45;
+          rturn_odometry();
+          bounce=0;
+          break;
+     case 2:
+          lturn45;
+          lturn_odometry();
+          bounce=0;
+          break;
+     default :
+          bounce=0;
+          break;
+    }
+   }
+   nav0=0; navr1=0; navr2=0; navl1=0; navl2=0;
+   fmove; Wait(500);
+   until((DISTANCE<=NEAR)||(ButtonPressed(BTNCENTER,false)==true));
+   stopmove;
+   s_odometry(); Wait(500);
+   if(ButtonPressed(BTNCENTER,false)==true)
+   { ExitTo(test); } // i.e press centre button once and hold for a second to keep screen on
+ }
+}
+
+task test()
+{
+ while(true)
+ {
+  //do nothing
+ }
+}
+
+//SUBROUTINES
+
+sub lturn_odometry()    // to find sum_turn_angle after robot has turned left
+{
+ arc_angle=MotorRotationCount(OUT_A);        // it returns degree!; motor A is used for left turns
+ arc_length=(arc_angle/360)*tyrecirc;        // arc length=(theta/360)*2.pi.r
+ turn_angle=(360*arc_length)/(robotcirc);    // theta=(360.arc length)/2.pi.r in degrees
+ sum_turn_angle=sum_turn_angle - turn_angle; // total angle turned frm the vertical so far; used by str8 odometry & process data
+
+ ResetRotationCount(OUT_AC);
+ Wait(1000);
+}
+
+sub rturn_odometry()    // to find sum_turn_angle after robot has turned right
+{
+ arc_angle=MotorRotationCount(OUT_C);        // it returns degree!; motor C is used for right turns
+ arc_length=(arc_angle/360)*tyrecirc;        // arc length=(theta/360)*2.pi.r
+ turn_angle=(360*arc_length)/(robotcirc);    // theta=(360.arc length)/2.pi.r in degrees; angle from the vertical
+ sum_turn_angle=sum_turn_angle + turn_angle; // total angle turned frm the vertical so far; used by str8 odometry & process data
+
+ ResetRotationCount(OUT_AC);
+ Wait(1000);
+}
+
+sub s_odometry()        // to find the last location of the robot
+{
+ arc_angle=(MotorRotationCount(OUT_A)+MotorRotationCount(OUT_C))/2;// it uses both to move forward, so average is used for accuracy
+ arc_length=(arc_angle/360)*tyrecirc;        // arc length=(theta/360)*2.pi.r; distance d moved in a straight line
+ s[0]=arc_length*sind(sum_turn_angle);       // x  disp ; s= d.sin(theta)i + d.cos(theta)j
+ s[1]=arc_length*cosd(sum_turn_angle);       // y  disp
+ bot_vect[0]=bot_vect[0]+s[0];               // x ; location= last_location + displacement s;  used by process data
+ bot_vect[1]=bot_vect[1]+s[1];               // y
+
+ ResetRotationCount(OUT_AC);
+ Wait(1000);
+}
+
+sub data()
+{
+ until(MotorRunState(OUT_B)==0);
+
+ //read, process and print data from directly infront of robot
+ //read data
+ data_store=DISTANCE;
+
+ // process and print data
+ if(data_store>=35)                          // if robot sees an object further than 40 cm
+ {data_store=0;}                             // collect no data
+ else
+ {sum_rdt_angle=sum_turn_angle;
+  s[0]=data_store*sind(sum_rdt_angle);       // x  disp
+  s[1]=data_store*cosd(sum_rdt_angle);       // y  disp
+  data_vect[0]=bot_vect[0]+s[0];             // Euston, we have ourselves an x coordinate!!! wuhoooooooo!!
+  data_vect[1]=bot_vect[1]+s[1];             // Euston, we have ourselves a y coordinate!!! double wuhoooooooo!!
+  //PointOut(data_vect[0],data_vect[1]);    // print the data
+  PointOut(scale*data_vect[0],scale*data_vect[1]);      // print the scaled data
+  nav0=1;
+ }
+
+ //read, process and print data from 1st quadrant of robot axis (front/right side of robot)
+ read_angle=15;
+ for(i=0;i<5;i++)
+ {
+  //read data
+  rrotate3;                                  // rotate u.s right by 15 degrees
+  until(MotorRunState(OUT_B)==0);
+  data_store=DISTANCE;
+
+  //process and print data
+  if(data_store>=35)                         // if robot sees an object further than 40 cm
+  {data_store=0;                             // collect no data
+   read_angle=read_angle+15;}                // increase angle
+  else
+  {sum_rdt_angle=sum_turn_angle + read_angle;
+   s[0]=data_store*sind(sum_rdt_angle);      // x  disp
+   s[1]=data_store*cosd(sum_rdt_angle);      // y  disp
+   data_vect[0]=bot_vect[0]+s[0];            // Euston, we have ourselves an x coordinate!!! wuhoooooooo!!
+   data_vect[1]=bot_vect[1]+s[1];            // Euston, we have ourselves a y coordinate!!! double wuhoooooooo!!
+   //PointOut(data_vect[0],data_vect[1]);    // print the data
+   PointOut(scale*data_vect[0],scale*data_vect[1]);      // print the scaled data
+   if(read_angle==45){navr1=1;}
+   else if(read_angle==90){navr2=1;}
+   read_angle=read_angle+15;}
+ }
+
+ lrotate9;                                   // return ultrasonic to neutral position
+ until(MotorRunState(OUT_B)==0);
+ Wait(1000);
+
+ //read, process and print data from 2nd quadrant of robot axis (front/left side of robot)
+ read_angle=15;
+ for(i=0;i<5;i++)
+ {
+  //read data
+  lrotate3;                                  // rotate u.s left by 15 degrees
+  until(MotorRunState(OUT_B)==0);
+  data_store=DISTANCE;
+
+  // process and print data
+  if(data_store>=35)                         // if robot sees an object further than 40 cm
+  {data_store=0;                             // collect no data
+   read_angle=read_angle+15;}                // increase angle
+  else
+  {sum_rdt_angle=sum_turn_angle - read_angle;
+   s[0]=data_store*sind(sum_rdt_angle);      // x  disp
+   s[1]=data_store*cosd(sum_rdt_angle);      // y  disp
+   data_vect[0]=bot_vect[0]+s[0];            // Euston, we have ourselves an x coordinate!!! wuhoooooooo!!
+   data_vect[1]=bot_vect[1]+s[1];            // Euston, we have ourselves a y coordinate!!! double wuhoooooooo!!
+   //PointOut(data_vect[0],data_vect[1]);    // print the data
+   PointOut(scale*data_vect[0],scale*data_vect[1]);      // print the scaled data
+   if(read_angle==45){navl1=1;}
+   else if(read_angle==90){navl2=1;}
+   read_angle=read_angle+15;}
+ }
+
+ rrotate9;                                   // return ultrasonic to neutral position
+ until(MotorRunState(OUT_B)==0);
+ Wait(1000);
+}

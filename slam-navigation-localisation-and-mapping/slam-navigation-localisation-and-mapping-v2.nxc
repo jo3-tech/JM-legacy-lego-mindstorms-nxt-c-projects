@@ -1,0 +1,354 @@
+//==MACROS===============================================================================================================================
+//------------------------------------------------------------------------------------------------------------------------------GENERAL--
+#define DISTANCE SensorUS(S4)                  // distance from the ultrasonic to the object being mapped (cm)
+#define NEAR 30                                // minimum object distance from robot (cm)
+#define lrotate90 RotateMotor(OUT_B,30,90)     // rotate ultrasonic left by 90 degrees
+#define rrotate180 RotateMotor(OUT_B,30,-180)  // rotate ultrasonic right by 180 degrees
+//-----------------------------------------------------------------------------------------------------------------------------LOCALISE--
+#define pi 3.14                                // pi =3.14
+#define dB 16.5                                // distance btw left & right wheels (between where they touch the ground) (cm)
+#define tyrecirc 16.96                         // tyre radius = 2.7cm, circumference = 2.pi.r=16.96 cm
+#define scale 1.0                              // scale factor depending on the size of the room
+//----------------------------------------------------------------------------------------------------------------------------------MAP--
+#define thetaUSR 50                            // angle btw the robot axis and the distance from ultrasonic to robot dUSR (deg)
+#define dUSR 5                                 // distance btw the robot location and the ultrasonic location both w.r.t origin (cm)
+//-----------------------------------------------------------------------------------------------------------------------------NAVIGATE--
+#define rturn OnFwd(OUT_C,70)                  // turn right (using one wheel)
+#define lturn OnFwd(OUT_A,70)                  // turn left (using one wheel)
+#define srturn OnFwd(OUT_C,60);OnFwd(OUT_A,10) // smooth turn right (using both wheels)
+#define slturn OnFwd(OUT_A,60);OnFwd(OUT_C,10) // smooth turn left (using both wheels)
+//#define fmove OnFwd(OUT_AC,70)               // move forward
+#define fmove OnFwdReg(OUT_AC,70,OUT_REGMODE_SYNC);
+#define stopmove Off(OUT_AC)                   // stop moving
+
+//==GLOBAL VARIABLES=====================================================================================================================
+//------------------------------------------------------------------------------------------------------------------------------GENERAL--
+byte handle;           // for use with file system
+int file_size;         // for storing the size of the file
+int byte_size;         // for storing the no. of bytes written to a file
+int rtn_code;          // return code for file system operations
+//-----------------------------------------------------------------------------------------------------------------------------LOCALISE--
+float theta=90;        // robot orientation w.r.t origin(deg) (set to 90 deg initially)
+float x=50,y=32;       // robot x & y coordinates resp. (set to 50,32 (screen centre) initially)
+/*the above values make sure the reference axis is aligned with the robots initial orientation such that when you first put
+the robot down, it is pointing in the y-direction and is in the centre of the nxt screen****** change this to x = 0, y= 0
+when u use matlab since space will not be a problem*/
+//----------------------------------------------------------------------------------------------------------------------------------MAP--
+float xMAP=0,yMAP=0;   // x & y mapping coordinates resp.
+//-----------------------------------------------------------------------------------------------------------------------------NAVIGATE--
+int navf=0,navr=0,navl=0,bounce=0; // navigation flags
+float gamma=0;         // required orientation of robot to navigate to unexplored location
+int GO=0;              // flag indicating whether the above direction is unexplored
+int pathcheck=0;       // determines what path planning method should occur
+
+//==PROTOTYPES&INLINE FUNCTIONS==========================================================================================================
+//---------------------------------------------------------------------------------------------------------------------------------------
+inline float deg_range(float angle)           // to make sure angles are in range 0->360 deg; use inline since it is used by many tasks
+{
+ //local variables
+ //n/a
+
+ // convert angle to a value btw 0->360 deg
+ if(angle>=(360)){angle=360-angle;}
+ else if(angle<0){angle=360+angle;}
+ return angle;
+}
+//---------------------------------------------------------------------------------------------------------------------------------------
+sub path_plan();                              // find somewhere that hasn't been explored
+sub explore();                                // navigate to planned direction
+//---------------------------------------------------------------------------------------------------------------------------------------
+task localise();                              // to perform odometry
+task map();                                   // to map the environment &/or robots trajectory
+task navigate();                              // as it says
+
+//==TASKS================================================================================================================================
+//---------------------------------------------------------------------------------------------------------------------------------------
+task main()
+{
+ //local variables
+ //n/a
+
+ //schedule tasks
+ Precedes(localise,map,navigate);
+
+ //initialise sensors
+ SetSensorLowspeed(S4);
+ ResetRotationCount(OUT_AC);
+
+ //create file for mapping data
+ DeleteFile("tile.txt");
+ rtn_code=CreateFile("tile.txt",4096,handle);
+ if(rtn_code!=NO_ERR) StopTask(main);         // stop program if the file wasn't created, NO_ERR = 0
+ CloseFile(handle);
+}
+//---------------------------------------------------------------------------------------------------------------------------------------
+task localise()
+{
+ //local variables
+ float thetaLM=0, thetaRM=0;         // amount by which left & right motors rotate resp. (deg bcos of motorrotationcount)
+ float dL=0,dR=0,dC=0;               // distance moved by left wheel, right wheel & robot centre respectively (cm bcos of tyrecirc)
+ float phi=0;                        // inner angle for arcs produced by dL, dR & dC (rad from odometry eqns derivation)
+
+ //odometry; differential drive
+ while(1)
+ {
+  Wait(200);                         // so different tasks are waiting for different periods to add some priority
+  thetaLM=MotorRotationCount(OUT_C);
+  thetaRM=MotorRotationCount(OUT_A);
+  dL=(thetaLM/360)*tyrecirc;         // arc length=(theta[deg]/360)*2.pi.r; distance motor moved in a straight line
+  dR=(thetaRM/360)*tyrecirc;         //     "
+  Yield();                           // so that any other function call to the motors will execute 1st
+  ResetRotationCount(OUT_AC);
+  Yield();
+
+  dC=(dL+dR)/2;
+  phi=(dR-dL)/dB;
+  phi=(phi*180)/pi;                  // convert phi to degrees
+
+  theta=theta+phi;
+  theta=deg_range(theta);            // make sure orientation range is always 0->360 deg
+
+  x=x+dC*cosd(theta);
+  y=y+dC*sind(theta);
+ }
+}
+//---------------------------------------------------------------------------------------------------------------------------------------
+task map()
+{
+ //local variables
+ float thetaUS=0;             // orientation of the ultrasonic w.r.t origin (deg since thetaUS & theta are deg)
+ float xUS=0,yUS=0;           // location of the ultrasonic w.r.t origin (cm)
+ float thetaUSM=0;            // amount by which the motor under the ultrasonic has rotated (deg) (NOTE ultrasonic must face forward)
+ float thetaMAP=0;            // orientation of the object being mapped w.r.t origin (deg)
+ float dMAP=0;                // distance of object from ultrasonic
+
+ //map the area &/or robots trajectory
+ while(1)
+ {
+  Wait(200);                            // so different tasks are waiting for different periods to add some priority/
+  if(DISTANCE>=NEAR)                    // if robot sees an object further than what is considered as near the robot
+  {
+   //PointOut(scale*x,scale*y);         // print only the robots position on the nxt screen;
+  }
+  else
+  {
+   thetaUS=thetaUSR+theta;
+   thetaUS=deg_range(thetaUS);          // make sure orientation range is always 0->360 deg
+
+   xUS=x+dUSR*cosd(thetaUS);
+   yUS=y+dUSR*sind(thetaUS);
+
+   thetaUSM=MotorRotationCount(OUT_B);
+   thetaMAP=theta+thetaUSM;
+   thetaMAP=deg_range(thetaMAP);        // make sure orientation range is always 0->360 deg
+
+   dMAP=DISTANCE;
+   xMAP=xUS+dMAP*cosd(thetaMAP);
+   yMAP=yUS+dMAP*sind(thetaMAP);
+   PointOut(scale*xMAP,scale*yMAP);     // print mapped coordinates on the nxt screen;
+   //PointOut(scale*x,scale*y);         // print the robots position on the nxt screen;
+  }
+ }
+}
+//---------------------------------------------------------------------------------------------------------------------------------------
+task navigate()
+{
+ //local variables
+ //n/a
+
+ while(1)
+ {
+  //plan a path
+  Wait(500);
+  path_plan();
+
+  //navigate to planned direction
+  Wait(500);
+  explore();
+ }
+}
+
+//==FUNCTIONS & SUBROUTINES==============================================================================================================
+//---------------------------------------------------------------------------------------------------------------------------------------
+sub path_plan()
+{
+ //local variables
+ float xMIN=0, yMIN=0;                           // left & bottom edges of the tile
+ float xMAX=0, yMAX=0;                           // right & top edges of the tile
+ string sxMIN, syMIN;                            // string counterparts of the above
+ string sxMAX, syMAX;
+
+ float xRAND=0,yRAND=0;                          // random point generated for the robot to navigate towards
+ float deltaxP=0, deltayP=0;                     // predicted change in x & y
+ float gammaP=0;
+ float dCP=0;                                    // predicted distance moved in a str8 line by the robot
+ float thetaP=0;                                 //   "  orientation "
+ float xP=0,yP=0;                                //   "  locations of robot
+
+ float xMINrd=0, yMINrd=0;                       // left & bottom edges of the tile read from file
+ float xMAXrd=0, yMAXrd=0;                       // right & top edges of the tile read from file
+ string sxMINrd, syMINrd;                        // string counterparts of the above
+ string sxMAXrd, syMAXrd;
+
+ int visited;                                    // indicates whether a point has been visited or not
+
+ //determine which direction the robot should go from its current position
+ if(pathcheck==0)
+ {
+  //tile up the space btw robot & object, & determine a clear path for the robot
+  OpenFileAppend("tile.txt", file_size, handle); // open file for writing
+  navf=0; navl=0; navr=0;
+
+  if(DISTANCE<=NEAR){ navf=1; }                  // check if robot sees an object in front of the robot
+
+  xMIN=x; yMIN=y;
+
+  lrotate90; until(MotorRunState(OUT_B)==0);     // wait till ultrasonic has stopped moving
+  if(DISTANCE<=NEAR){ navl=1; }                  // check if robot sees an object to the left of the robot
+
+  if(xMAP<xMIN){xMIN=xMAP; xMAX=x;}
+  else{xMAX=xMAP;}
+  if(yMAP<yMIN){yMIN=yMAP; yMAX=y;}
+  else{yMAX=yMAP;}
+
+  rrotate180; until(MotorRunState(OUT_B)==0);
+  if(DISTANCE<=NEAR){ navr=1; }                  // check if robot sees an object to the right of the robot
+
+  if(xMAP<xMIN){xMIN=xMAP;}
+  else{if(xMAP>xMAX){xMAX=xMAP;}}
+  if(yMAP<yMIN){yMIN=yMAP;}
+  else{if(yMAP>yMAX){yMAX=yMAP;}}
+
+  lrotate90; until(MotorRunState(OUT_B)==0);     // return ultrasonic to neutral position
+ 
+  sxMIN=NumToStr(xMIN); sxMAX=NumToStr(xMAX);
+  syMIN=NumToStr(yMIN); syMAX=NumToStr(yMAX);
+  WriteLnString(handle, sxMIN, byte_size);       // write the 4 vaules; xMIN,xMAX,yMIN, yMAX to file
+  WriteLnString(handle, sxMAX, byte_size);
+  WriteLnString(handle, syMIN, byte_size);
+  WriteLnString(handle, syMAX, byte_size);
+  CloseFile(handle);                             // close "tiles" file then exit
+  GO=0; Wait(500);
+ }
+
+ //determine whether the chosen direction has been visited previously
+ else
+ {
+  //check the current path & if it has been visited generate new paths & check them as well
+  GO=1; int count=1;
+  while(count<=3)                                // only attempt to plan a path 3 times
+  {
+   visited=0;
+   if(pathcheck==1){ thetaP=theta; pathcheck=0;} // just check the current path
+   else                                          // generate a new path to check
+   {
+    xRAND=Random(x);  yRAND=Random(y);
+    deltaxP=xRAND-x;  deltayP=yRAND-y;
+    gammaP=atan2d(deltaxP,deltayP);              // returns degrees
+    gammaP=deg_range(gammaP);                    // make sure gammaP is always 0->360 deg
+    thetaP=gammaP;
+   }
+
+   xP=x; yP=y;                                   // set initial predicted pos. to current robot pos.
+   dCP=1;                                        // set the incremental distance for robots predicted motion in str8 line
+
+   int i;
+   for(i=1;i<=100;i++)                           // predict the robots motion 100cm ahead
+   {
+     xP=xP+dCP*cosd(thetaP);
+     yP=yP+dCP*sind(thetaP);
+
+     OpenFileRead("tile.txt", file_size, handle);// open file for reading
+     rtn_code=NO_ERR;
+     while(1)
+     {
+      rtn_code=ReadLnString(handle,sxMINrd); if(rtn_code!=NO_ERR) break;
+      xMINrd=StrToNum(sxMINrd);
+      rtn_code=ReadLnString(handle,sxMAXrd); if(rtn_code!=NO_ERR) break;
+      xMAXrd=StrToNum(sxMAXrd);
+      rtn_code=ReadLnString(handle,syMINrd); if(rtn_code!=NO_ERR) break;
+      yMINrd=StrToNum(syMINrd);
+      rtn_code=ReadLnString(handle,syMAXrd); if(rtn_code!=NO_ERR) break;
+      yMAXrd=StrToNum(syMAXrd);
+      if((xMINrd<=xP)&&(xP<=xMAXrd))
+      {
+       if((yMINrd<=yP)&&(yP<=yMAXrd)){visited=1; break;}
+      } // check if this predicted position has been visited b4, stop checking if so & exit to find new point
+     }
+
+     CloseFile(handle);                          // close "tiles" file
+     if(visited==1){break;}                      // exit to get new point
+                                                 // otherwise continue checking until i=31
+   }
+
+   if(i==101){gamma=gammaP; if(count>1){GO=2;} Wait(500); break;}         // the path hasnt been visited b4, exit while loop
+   else{count=count+1;}                          // otherwise continue while loop
+  }
+
+ }
+}
+//---------------------------------------------------------------------------------------------------------------------------------------
+sub explore()
+{
+ //local variables
+ float alpha=0;     // difference btwn gamma & theta; used to determine shortest direction for robot to rotate
+ 
+ //navigate to planned direction
+ if(GO==0)
+ {
+  if((navf)&&(navr)&&(navl))                                                  // if robot is in a corner/boxed in; turn around 180 deg
+  {
+   gamma=theta-180; gamma=deg_range(gamma);
+   rturn; until((theta>=gamma-15)&&(theta<=gamma+15)); stopmove;              // turn around 180 deg
+  }
+  else if((navf)&&(navr))                                                     // if robot is at a right corner; turn left
+  {
+   gamma=theta+90; gamma=deg_range(gamma);
+   lturn; until((theta<=gamma+15)&&(theta>=gamma-15)); stopmove;              // turn left by 90 deg
+  }
+  else if((navf)&&(navl))                                                     // if robot is at a left corner; turn right
+  {
+   gamma=theta-90; gamma=deg_range(gamma);
+   rturn; until((theta>=gamma-15)&&(theta<=gamma+15)); stopmove;              // turn right by 90 deg
+  }
+  else                                                                        // for the case if navf or no obstacle near the robot
+  {
+   switch (Random(2))
+   {
+     case 0: gamma=theta-90; gamma=deg_range(gamma);
+             rturn; until((theta>=gamma-15)&&(theta<=gamma+15)); stopmove;    // turn right by 90 deg
+             break;
+     case 1: gamma=theta+90; gamma=deg_range(gamma);
+             lturn; until((theta<=gamma+15)&&(theta>=gamma-15)); stopmove;    // turn left by 90 deg
+             break;
+   }
+  }
+  pathcheck=1; Wait(500);
+ }
+
+ else if(GO==1)
+ {
+  fmove; until(DISTANCE<=NEAR); stopmove; pathcheck=0; Wait(500);
+ }
+ 
+ else              // if GO=2
+ {
+  alpha=gamma-theta;
+
+  if(alpha<0)      // theta>gamma
+  {
+   if(abs(alpha)<180){ rturn; until((theta<=gamma+15)&&(theta>=gamma-15)); }
+   if(abs(alpha)>180){ lturn; until((theta>=gamma-15)&&(theta<=gamma+15)); }
+  }
+  else
+  {
+   if(abs(alpha)<180){ lturn; until((theta>=gamma-15)&&(theta<=gamma+15)); }
+   if(abs(alpha)>180){ rturn; until((theta<=gamma+15)&&(theta>=gamma-15)); }
+  }
+
+ stopmove; Wait(500); fmove; until(DISTANCE<=NEAR); stopmove; pathcheck=0; Wait(500);
+ }
+
+}
+
+//==END==================================================================================================================================

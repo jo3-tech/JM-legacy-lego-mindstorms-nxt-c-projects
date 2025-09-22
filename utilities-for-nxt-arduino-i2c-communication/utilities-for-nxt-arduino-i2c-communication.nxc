@@ -1,0 +1,65 @@
+#ifndef i2c_nxt_nxc
+#define i2c_nxt_nxc
+
+//==GLOBAL FUNCTION IMPLEMENTATIONS======================================================================================================
+//---------------------------------------------------------------------------------------------------------------------------------------
+void i2c_write_led(byte slave_port, byte slave_address, byte state, byte outpin)
+{
+ //LED
+ byte identify=1;                   // unique identifier; 1 = write to LED
+ slave_address=slave_address*2;     // nxt thinks slave device with address 1 actually has address 1x2 = 2 etc.
+ byte outbuffer[];
+ ArrayBuild(outbuffer, slave_address, identify, state, outpin);
+ while(I2CCheckStatus(slave_port) ==  STAT_COMM_PENDING); //Wait until bus is free
+ I2CWrite(slave_port, 0, outbuffer);        //When the I2C bus is ready, send the message
+ while(I2CCheckStatus(slave_port) ==  STAT_COMM_PENDING); //Wait until bus is free
+ //TextOut(0, LCD_LINE1, "LED", DRAW_OPT_CLEAR_WHOLE_SCREEN);
+}
+//---------------------------------------------------------------------------------------------------------------------------------------
+void i2c_write_dcmotor(byte slave_port, byte slave_address, int power, byte outpin)// 1<=power<=100 =on, power=0=off
+{
+ //DC motor
+ byte identify=2;                   // unique identifier; 2 = write to DC motor
+ slave_address=slave_address*2;     // nxt thinks slave device with address 1 actually has address 1x2 = 2 etc.
+ byte pwr=floor(2.55*power);        // arduino pwm values range from 0 to 255
+ byte outbuffer[];
+ ArrayBuild(outbuffer, slave_address, identify, pwr, outpin);
+ while(I2CCheckStatus(slave_port) ==  STAT_COMM_PENDING); //Wait until bus is free
+ I2CWrite(slave_port, 0, outbuffer);        //When the I2C bus is ready, send the message
+ while(I2CCheckStatus(slave_port) ==  STAT_COMM_PENDING); //Wait until bus is free
+ //TextOut(0, LCD_LINE1, "DC motor", DRAW_OPT_CLEAR_WHOLE_SCREEN);
+}
+//---------------------------------------------------------------------------------------------------------------------------------------
+void i2c_write_cservo(byte slave_port, byte slave_address, int power, byte datapin)// 1<=power<=100 =on, power=0=off
+{
+ //continuous rotation servo motor(no encoder)
+ byte identify=3;                   // unique identifier; 3 = write to servo motor
+ slave_address=slave_address*2;     // nxt thinks slave device with address 1 actually has address 1x2 = 2 etc.
+ byte pwr=floor(0.9*power+90);      // arduino servo values range from 0 to 90 to 180 where 0 = -ve max, 90 = off, 180 = +ve max
+ byte outbuffer[];
+ ArrayBuild(outbuffer, slave_address, identify, pwr, datapin);
+ while(I2CCheckStatus(slave_port) ==  STAT_COMM_PENDING); //Wait until bus is free
+ I2CWrite(slave_port, 0, outbuffer);        //When the I2C bus is ready, send the message
+ while(I2CCheckStatus(slave_port) ==  STAT_COMM_PENDING); //Wait until bus is free
+ //TextOut(0, LCD_LINE1, "cont servo motor", DRAW_OPT_CLEAR_WHOLE_SCREEN);
+}
+//---------------------------------------------------------------------------------------------------------------------------------------
+int i2c_read_touch(byte slave_port, byte slave_address, byte inpin)
+{
+ //touch sensor
+ byte identify=4;                  // unique identifier; 4 = read touch sensor
+ slave_address=slave_address*2;     // nxt thinks slave device with address 1 actually has address 1x2 = 2 etc.
+ byte outbuffer[];
+ ArrayBuild(outbuffer, slave_address, identify, inpin);
+ byte inbuffer, count=1;
+ while(I2CCheckStatus(slave_port) ==  STAT_COMM_PENDING); //Wait until bus is free
+ I2CBytes(slave_port, outbuffer, count, inbuffer);    // Read the registers
+ while(I2CCheckStatus(slave_port) ==  STAT_COMM_PENDING); //Wait until bus is free
+ int state=inbuffer;                // we assume the correct number of bytes has been sent back i.e. 1 byte of data
+ //TextOut(0, LCD_LINE1, "touch sensor", DRAW_OPT_CLEAR_WHOLE_SCREEN);
+ return state;
+}
+
+//==END==================================================================================================================================
+//---------------------------------------------------------------------------------------------------------------------------------------
+#endif
