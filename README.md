@@ -23,7 +23,7 @@ The aim of [this project](line-following-and-obstacle-avoidance/line-following-a
 
 The aim of this project was to create a robot that could track (and follow) an object using it's colour.
 
-A counterpart android application called [NXTcam](https://github.com/jo3-tech/JM-legacy-matlab-and-processing-projects/tree/main/NXTcam-android) was created to perform an image processing task to identify and locate the coloured object. It is archived in the [JM-legacy-matlab-and-processing-projects repository](https://github.com/jo3-tech/JM-legacy-matlab-and-processing-projects).
+A counterpart android application called [NXTcam](https://github.com/jo3-tech/JM-legacy-matlab-and-processing-projects/tree/main/nxtcam-android) was created to perform an image processing task to identify and locate the coloured object. It is archived in the [JM-legacy-matlab-and-processing-projects repository](https://github.com/jo3-tech/JM-legacy-matlab-and-processing-projects).
 
 The application in this repository is meant to run on the NXT robot, and receive the objects location co-ordinates via Bluetooth, so as to control the drive system to follow the object.
 
