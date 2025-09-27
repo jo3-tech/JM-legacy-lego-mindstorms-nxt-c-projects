@@ -10,7 +10,7 @@ These projects were created between 2008 and 2013, during my early journey into 
 
 These projects were early-stage prototypes and were never fully finalised. All code, documentation, and descriptions were originally written over a decade ago and have been copied here with only minor modification. As such, they may lack polish, clarity, or completeness, and do not reflect current best practices.
 
-The recommended method to build these projects is using the [BricxCC IDE](https://bricxcc.sourceforge.net).
+The recommended method to build these projects is using the [BricxCC IDE](https://bricxcc.sourceforge.net) version 3.3.
 
 ## line-following-and-obstacle-avoidance
 
